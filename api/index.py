@@ -1,6 +1,5 @@
 from flask import Flask, request, Response, jsonify
 import requests
-import json
 
 app = Flask(__name__)
 
@@ -44,11 +43,9 @@ Pauses: Short, purposeful pauses after key moments in the game."""
         if response.status_code == 200:
             return response.content
         else:
-            print(f"Error: Received status code {response.status_code}")
             return None
             
     except Exception as e:
-        print(f"An error occurred: {e}")
         return None
 
 
@@ -95,48 +92,49 @@ def home():
     return html
 
 
-@app.route('/api/generate', methods=['GET'])
+@app.route('/api/generate')
 def generate():
     """
     Generate voice audio from text prompt
     Usage: /api/generate?prompt=your+text+here&voice=alloy&vibe=null
     """
-    # Get parameters from query string
-    prompt = request.args.get('prompt')
-    voice = request.args.get('voice', 'alloy')
-    vibe = request.args.get('vibe', 'null')
+    try:
+        # Get parameters from query string
+        prompt = request.args.get('prompt')
+        voice = request.args.get('voice', 'alloy')
+        vibe = request.args.get('vibe', 'null')
+        
+        # Validate prompt
+        if not prompt:
+            return jsonify({
+                "error": "Missing 'prompt' parameter",
+                "usage": "/api/generate?prompt=your+text+here"
+            }), 400
+        
+        # Generate audio
+        audio_bytes = generate_voice_audio(prompt, voice, vibe)
+        
+        if audio_bytes:
+            # Return the audio file directly
+            return Response(
+                audio_bytes,
+                mimetype='audio/wav',
+                headers={
+                    'Content-Disposition': 'attachment; filename="voice_audio.wav"',
+                    'Content-Type': 'audio/wav'
+                }
+            )
+        else:
+            return jsonify({
+                "error": "Failed to generate audio"
+            }), 500
     
-    # Validate prompt
-    if not prompt:
+    except Exception as e:
         return jsonify({
-            "error": "Missing 'prompt' parameter",
-            "usage": "/api/generate?prompt=your+text+here"
-        }), 400
-    
-    # Generate audio
-    print(f"Generating audio for: '{prompt}'")
-    audio_bytes = generate_voice_audio(prompt, voice, vibe)
-    
-    if audio_bytes:
-        # Return the audio file directly
-        return Response(
-            audio_bytes,
-            mimetype='audio/wav',
-            headers={
-                'Content-Disposition': f'attachment; filename="voice_audio.wav"',
-                'Content-Type': 'audio/wav'
-            }
-        )
-    else:
-        return jsonify({
-            "error": "Failed to generate audio"
+            "error": str(e)
         }), 500
 
 
-# For Vercel serverless function
-def handler(request):
-    with app.request_context(request.environ):
-        try:
-            return app.full_dispatch_request()
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+# Vercel serverless handler
+def handler(environ, start_response):
+    return app(environ, start_response)
