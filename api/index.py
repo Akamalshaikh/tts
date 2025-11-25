@@ -1,22 +1,10 @@
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, stream_with_context
 import requests
 
 app = Flask(__name__)
 
-def generate_voice_audio(input_text, voice="alloy", vibe="null"):
-    """
-    Sends a request to the openai.fm API to generate audio.
-    Returns the audio bytes if successful, None otherwise.
-    """
-    url = "https://www.openai.fm/api/generate"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
-        "Origin": "https://www.openai.fm",
-        "Referer": "https://www.openai.fm/",
-    }
-
-    system_prompt = """Voice Affect: Energetic and animated; dynamic with variations in pitch and tone.
+# The detailed style prompt (hardcoded as the default style)
+SYSTEM_PROMPT_STYLE = """Voice Affect: Energetic and animated; dynamic with variations in pitch and tone.
 
 Tone: Excited and enthusiastic, conveying an upbeat and thrilling atmosphere.
 
@@ -30,111 +18,61 @@ Personality: Relatable and engaging.
 
 Pauses: Short, purposeful pauses after key moments in the game."""
 
-    payload = {
-        "input": input_text,
-        "prompt": system_prompt,
-        "voice": voice,
-        "vibe": vibe
+@app.route('/', methods=['GET'])
+def index():
+    """Health check route."""
+    return (
+        "<h1>OpenAI FM API Wrapper is Running</h1>"
+        "<p>Use the endpoint: <a href='/api/generate?prompt=Test'>/api/generate?prompt=Test</a></p>"
+    )
+
+@app.route('/api/generate', methods=['GET'])
+def generate_audio_endpoint():
+    """
+    Endpoint to generate audio.
+    Usage: GET /api/generate?prompt=Your%20Text%20Here
+    """
+    # Get the text input from the URL query parameter 'prompt'
+    user_input = request.args.get('prompt')
+
+    if not user_input:
+        return "Error: Missing 'prompt' parameter. Usage: /api/generate?prompt=text", 400
+
+    url = "https://www.openai.fm/api/generate"
+
+    # Headers to mimic a real browser request
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        "Origin": "https://www.openai.fm",
+        "Referer": "https://www.openai.fm/",
     }
 
+    # Construct the payload
+    payload = {
+        "input": user_input,
+        "prompt": SYSTEM_PROMPT_STYLE,
+        "voice": "alloy",
+        "vibe": "null"
+    }
+
+    print(f"Endpoint received request for text: '{user_input}'")
+
     try:
-        response = requests.post(url, headers=headers, data=payload, timeout=30)
+        # Make the POST request to the upstream API
+        upstream_response = requests.post(url, headers=headers, data=payload, stream=True)
         
-        if response.status_code == 200:
-            return response.content
-        else:
-            return None
-            
-    except Exception as e:
-        return None
-
-
-@app.route('/')
-def home():
-    """Home page with API documentation"""
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Voice Generation API</title>
-        <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-            h1 { color: #333; }
-            code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
-            .example { background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 10px 0; }
-            a { color: #2196F3; text-decoration: none; }
-            a:hover { text-decoration: underline; }
-        </style>
-    </head>
-    <body>
-        <h1>🎙️ Voice Generation API</h1>
-        <h2>Endpoint:</h2>
-        <p><strong>GET /api/generate</strong></p>
-        
-        <h3>Parameters:</h3>
-        <ul>
-            <li><code>prompt</code> (required) - Text to convert to speech</li>
-            <li><code>voice</code> (optional) - Voice type (default: alloy)</li>
-            <li><code>vibe</code> (optional) - Vibe setting (default: null)</li>
-        </ul>
-        
-        <h3>Example Usage:</h3>
-        <div class="example">
-            <p><a href="/api/generate?prompt=hi solox" target="_blank">/api/generate?prompt=hi solox</a></p>
-            <p><a href="/api/generate?prompt=Hello world, this is amazing!" target="_blank">/api/generate?prompt=Hello world, this is amazing!</a></p>
-        </div>
-        
-        <h3>How to use:</h3>
-        <p>Simply add your text after <code>?prompt=</code> and the audio will download automatically!</p>
-    </body>
-    </html>
-    """
-    return html
-
-
-@app.route('/api/generate')
-def generate():
-    """
-    Generate voice audio from text prompt
-    Usage: /api/generate?prompt=your+text+here&voice=alloy&vibe=null
-    """
-    try:
-        # Get parameters from query string
-        prompt = request.args.get('prompt')
-        voice = request.args.get('voice', 'alloy')
-        vibe = request.args.get('vibe', 'null')
-        
-        # Validate prompt
-        if not prompt:
-            return jsonify({
-                "error": "Missing 'prompt' parameter",
-                "usage": "/api/generate?prompt=your+text+here"
-            }), 400
-        
-        # Generate audio
-        audio_bytes = generate_voice_audio(prompt, voice, vibe)
-        
-        if audio_bytes:
-            # Return the audio file directly
+        if upstream_response.status_code == 200:
+            # Stream the audio back to the browser
             return Response(
-                audio_bytes,
-                mimetype='audio/wav',
-                headers={
-                    'Content-Disposition': 'attachment; filename="voice_audio.wav"',
-                    'Content-Type': 'audio/wav'
-                }
+                stream_with_context(upstream_response.iter_content(chunk_size=1024)),
+                content_type=upstream_response.headers.get('Content-Type', 'audio/wav')
             )
         else:
-            return jsonify({
-                "error": "Failed to generate audio"
-            }), 500
-    
+            return f"Upstream API Error: {upstream_response.status_code} - {upstream_response.text}", 502
+
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
+        return f"Server Error: {e}", 500
 
-
-# Vercel serverless handler
-def handler(environ, start_response):
-    return app(environ, start_response)
+# Vercel requires the app to be exposed, but for local testing:
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
